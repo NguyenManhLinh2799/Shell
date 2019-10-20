@@ -81,7 +81,7 @@ int redirectCheck(char *a[], char **fileName)
 	return flag;
 }
 
-// Ham redirect input hay output dua tren reCheck
+// Ham redirect input hoac output dua tren reCheck
 void redirectIO(int reCheck, char *fileName)
 {
 	int fd;
@@ -97,16 +97,101 @@ void redirectIO(int reCheck, char *fileName)
 	}
 }
 
+// Ham thuc thi command trong tien trinh con, co kiem tra redirect
+void executeChild(char *args[])
+{
+	// Kiem tra redirect I/O
+	char *fileName = NULL;
+	int reCheck = redirectCheck(args, &fileName);
+	if (reCheck != 0)
+	{
+		redirectIO(reCheck, fileName);
+	}
+
+	execvp(args[0], args);
+}
+
+// Ham kiem tra co pipe character (|) trong command khong
+// tra ve vi tri cua pipe character neu co, nguoc lai tra ve 0
+int pipeCheck(char *a[])
+{
+	int n = argsCount(a);
+	if (n >= 3)
+	{
+		int i;
+		for (i = 1; i < n; i++)
+		{
+			if (strcmp(a[i], "|") == 0)
+			{
+				return i;
+			}
+		}
+	}
+	return 0;
+}
+
+// Ham tach command thanh 2 command dua vao vi tri của pipe character
+void separate(char *a[], char *a1[], char *a2[], int pipePos)
+{
+	int n = argsCount(a);
+	int i;
+	int j = 0;
+	for (i = 0; i < pipePos; i++)
+	{
+		a1[j++] = a[i];
+	}
+	a1[j] = NULL;
+	j = 0;
+	for (i = pipePos + 1; i < n; i++)
+	{
+		a2[j++] = a[i];
+	}
+	a2[j] = NULL;
+}
+
+// Ham tao pipe giua hai tien trinh
+void pipeCreate(char *a1[], char *a2[])
+{
+	int p[2];
+	pipe(p);
+
+	if (fork() == 0)
+	{
+		dup2(p[1], STDOUT_FILENO);
+		close(p[0]);
+		executeChild(a1);
+	}
+	else
+	{
+		int n3 = fork();
+		if (n3 == 0)
+		{
+			dup2(p[0], STDIN_FILENO);
+			close(p[1]);
+			executeChild(a2);
+		}
+		else
+		{
+			close(p[1]);
+			wait(NULL);
+		}
+	}
+	close(p[0]);
+	wait(NULL);
+	exit(0);
+}
+
 // Ham main
 int main()
 {
 	char *args[MAXLINE / 2 + 1];
-	int flag = 1;
-	while (flag)
+	char *history = NULL;
+
+	while (1)
 	{
 		printf("osh>");
 		fflush(stdout);
-		// Doc input
+		// Nhap command
 		char *input = (char *)malloc(MAXLINE * sizeof(char));
 		if (input != NULL)
 		{
@@ -116,26 +201,49 @@ int main()
 		// Neu go exit -> thoat chuong trinh
 		if (strcmp(input, "exit") == 0)
 		{
-			flag = 0;
 			break;
 		}
 
+		// Kiem tra lenh !!
+		if (strcmp(input, "!!") == 0)
+		{
+			if (history == NULL) // khong co command trong history
+			{
+				printf("No commands in history\n");
+				continue;
+			}
+			else
+			{
+				strcpy(input, history);
+			}
+		}
+		else // Neu khong phai lenh !! thi copy input vao history
+		{
+			free(history);
+			history = (char *)malloc(strlen(input) * sizeof(char) + 1);
+			strcpy(history, input);
+		}
+
+		// Doc input
 		int includeAnd = readInput(args, input);
 
 		if (fork() == 0) // Tien trinh con
 		{
-			// Kiem tra redirect I/O
-			char *fileName = NULL;
-			int reCheck = redirectCheck(args, &fileName);
-			if (reCheck != 0)
+			// Kiem tra pipe character
+			int pipePos = pipeCheck(args);
+			// Neu co thi tach args thanh 2 args
+			// tao pipe va tien trinh con khac
+			if (pipePos != 0)
 			{
-				redirectIO(reCheck, fileName);
+				char *argsChild1[MAXLINE / 2 + 1];
+				char *argsChild2[MAXLINE / 2 + 1];
+				separate(args, argsChild1, argsChild2, pipePos);
+				pipeCreate(argsChild1, argsChild2);
 			}
-
-			// Goi command voi args da cho
-			execvp(args[0], args);
-			// Thoat tien trinh con
-			exit(0);
+			else // Neu la command binh thuong -> thuc thi voi args da cho
+			{
+				executeChild(args);
+			}
 		}
 		else // Tien trinh cha
 		{
